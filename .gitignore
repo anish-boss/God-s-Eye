@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.env
+
+# Local reference images and live location
+reference_faces/*
+!reference_faces/README.md
+runtime/*
+!runtime/.gitkeep
+
+# Model weights are downloaded locally
+models/*.onnx
+
+# Logs and local fallback events
+*.log
+events.jsonl
