@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Gods Eye | Local Dashboard</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<style>
+:root{color-scheme:dark;--bg:#0b1220;--panel:#121c2d;--line:#26354b;--muted:#9aabc2;--accent:#5eead4}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:#edf4ff;font:15px/1.5 system-ui,Segoe UI,sans-serif}
+header{padding:22px 5vw;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:center;gap:16px}
+h1{font-size:1.4rem;margin:0}h2{font-size:1rem;margin:0 0 12px}main{max-width:1200px;margin:24px auto;padding:0 18px}
+.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}.panel{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:18px;min-width:0}
+.wide{grid-column:1/-1}button{background:var(--accent);color:#06251f;border:0;padding:10px 14px;border-radius:9px;font-weight:700;cursor:pointer}
+input{max-width:100%;margin:8px 0 12px}small,.muted{color:var(--muted)}#map{height:330px;border-radius:12px;overflow:hidden}
+.status{padding:10px 12px;background:#0b1524;border-radius:10px;margin-top:10px;color:var(--muted);overflow-wrap:anywhere}
+.event{padding:12px 0;border-bottom:1px solid var(--line)}.event:last-child{border:0}.pill{font-size:12px;padding:3px 8px;border-radius:20px;background:#3a252b;color:#ffb7c1}
+@media(max-width:720px){.grid{grid-template-columns:1fr}.wide{grid-column:auto}header{align-items:flex-start;flex-direction:column}}
+</style></head>
+<body>
+<header><div><h1>◉ GODS EYE</h1><div class="muted">Local-first monitoring dashboard</div></div><div id="status" class="muted">Checking system…</div></header>
+<main><div class="grid">
+<section class="panel"><h2>1. Reference image</h2><p class="muted">Choose an image you are authorized to use. It stays on this laptop.</p>
+<form id="uploadForm"><input id="reference" type="file" accept="image/*" required><br><button>Save reference image locally</button></form><div id="uploadStatus" class="status">No upload yet.</div></section>
+<section class="panel"><h2>2. Device location</h2><p class="muted">Share this device's location with the local app. Browser/Windows support and permissions vary.</p>
+<button id="locationBtn">Enable device location</button><div id="locationStatus" class="status">Location is off.</div></section>
+<section class="panel wide"><h2>3. Detection map</h2><div id="map"></div><p class="muted">Map tiles require internet. Face matching runs locally; event metadata may be sent to Atlas.</p></section>
+<section class="panel wide"><h2>4. Recent events</h2><div id="events" class="muted">Start monitor.py in a second terminal.</div></section>
+</div></main>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+const map=L.map('map').setView([20.5937,78.9629],4);
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'&copy; OpenStreetMap contributors'}).addTo(map);
+let deviceMarker=null;const eventMarkers=L.layerGroup().addTo(map);
+async function refreshStatus(){try{const s=await(await fetch('/api/status')).json();document.getElementById('status').textContent=s.reference_uploaded?'Reference ready · '+(s.location_feed_present?'Location feed active':'Location not active'):'Upload a reference image to begin';}catch(e){document.getElementById('status').textContent='API unavailable';}}
+document.getElementById('uploadForm').addEventListener('submit',async e=>{e.preventDefault();const f=document.getElementById('reference').files[0];if(!f)return;const d=new FormData();d.append('file',f);const o=document.getElementById('uploadStatus');o.textContent='Uploading to local app…';try{const r=await fetch('/api/reference',{method:'POST',body:d});const j=await r.json();o.textContent=r.ok?j.message:(j.detail||'Upload failed');refreshStatus();}catch(e){o.textContent='Could not reach local API.';}});
+document.getElementById('locationBtn').addEventListener('click',()=>{const o=document.getElementById('locationStatus');if(!navigator.geolocation){o.textContent='This browser does not support geolocation.';return;}o.textContent='Waiting for a location fix…';navigator.geolocation.watchPosition(async p=>{const v={latitude:p.coords.latitude,longitude:p.coords.longitude,accuracy_m:p.coords.accuracy,fix_timestamp:new Date(p.timestamp).toISOString(),source:'browser_geolocation'};try{await fetch('/api/location',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(v)});o.textContent='Location updated · accuracy ±'+Math.round(p.coords.accuracy)+' m';if(deviceMarker)deviceMarker.setLatLng([v.latitude,v.longitude]);else deviceMarker=L.marker([v.latitude,v.longitude]).addTo(map).bindPopup('This device location');map.setView([v.latitude,v.longitude],14);refreshStatus();}catch(e){o.textContent='Could not save location.';}},err=>{o.textContent='Location unavailable: '+err.message;},{enableHighAccuracy:true,maximumAge:10000,timeout:15000});});
+async function refreshEvents(){try{const rows=await(await fetch('/api/events?limit=50')).json();const root=document.getElementById('events');eventMarkers.clearLayers();if(!rows.length){root.textContent='No detection events yet.';return;}root.replaceChildren();rows.forEach(ev=>{const div=document.createElement('div');div.className='event';const title=document.createElement('div');const pill=document.createElement('span');pill.className='pill';pill.textContent='POTENTIAL MATCH';title.append(pill,document.createTextNode(' '+(ev.detected_at||'Unknown time')));const detail=document.createElement('div');detail.className='muted';const loc=ev.location&&ev.location.available?ev.location.latitude.toFixed(5)+', '+ev.location.longitude.toFixed(5):'Location unavailable';detail.textContent='Camera: '+(ev.camera_id||'unknown')+' · '+loc+' · Similarity: '+(ev.similarity??'n/a');div.append(title,detail);root.append(div);if(ev.location&&ev.location.available){eventMarkers.addLayer(L.marker([ev.location.latitude,ev.location.longitude]).bindPopup('Potential match<br>'+(ev.detected_at||'')+'<br>'+(ev.camera_id||'')));}});}catch(e){document.getElementById('events').textContent='Could not load events.';}}
+refreshStatus();refreshEvents();setInterval(()=>{refreshStatus();refreshEvents();},5000);
+</script></body></html>
