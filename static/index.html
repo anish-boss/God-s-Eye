@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>The Gods Eye | Local Dashboard</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<style>
+:root{color-scheme:dark;--bg:#0b1220;--panel:#121c2d;--line:#26354b;--muted:#9aabc2;--accent:#5eead4}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:#edf4ff;font:15px/1.5 system-ui,Segoe UI,sans-serif}
+header{padding:22px 5vw;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:center;gap:16px;flex-wrap:wrap}
+h1{font-size:1.4rem;margin:0}h2{font-size:1rem;margin:0 0 12px}main{max-width:1200px;margin:24px auto;padding:0 18px}
+.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}.panel{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:18px;min-width:0}.wide{grid-column:1/-1}
+button{background:var(--accent);color:#06251f;border:0;padding:10px 14px;border-radius:9px;font-weight:700;cursor:pointer}input[type=file]{max-width:100%;margin:8px 0 12px}
+.muted,small{color:var(--muted)}.status{padding:10px 12px;border-radius:8px;background:#17263a;margin:10px 0;overflow-wrap:anywhere}.events{display:grid;gap:8px}.event{padding:10px;border:1px solid var(--line);border-radius:8px}.pill{font-size:.8rem;border:1px solid var(--line);border-radius:999px;padding:4px 9px;color:var(--muted)}#map{height:260px;border-radius:10px;background:#0b1220}footer{padding:22px 5vw;color:var(--muted);font-size:.85rem}
+@media(max-width:760px){.grid{grid-template-columns:1fr}.wide{grid-column:auto}header{padding:18px}}
+</style>
+</head>
+<body>
+<header><div><h1>The Gods Eye</h1><div class="muted">Local-first webcam face-matching prototype</div></div><span class="pill" id="api-status">Checking local API…</span></header>
+<main><div class="grid">
+<section class="panel"><h2>Reference image</h2><p class="muted">Choose a clear, front-facing photo containing one face. The image is saved locally on this computer.</p>
+<form id="upload-form"><input id="reference" name="file" type="file" accept="image/*" required><br><button type="submit">Save reference locally</button></form><div class="status" id="upload-status" role="status">No upload performed yet.</div></section>
+<section class="panel"><h2>Device location</h2><p class="muted">Optional. This records the browser's device location, not the location of a person in the video.</p><button id="location-button" type="button">Enable device location</button><div class="status" id="location-status" role="status">Location not shared.</div></section>
+<section class="panel"><h2>Monitor status</h2><div class="status" id="monitor-status">Check status…</div><p class="muted">Start webcam monitoring in a separate terminal with <code>python monitor.py</code>. The dashboard does not start it automatically.</p><button id="refresh" type="button">Refresh status and events</button></section>
+<section class="panel"><h2>Recent events</h2><div id="events" class="events"><p class="muted">Loading events…</p></div></section>
+<section class="panel wide"><h2>Event locations</h2><div id="map" aria-label="Map of event locations"></div><p class="muted">Only events with valid, available coordinates can appear on the map. Map tiles are provided by OpenStreetMap.</p></section>
+</div>
+<p class="muted">Privacy note: face matching can produce false positives and is not proof of identity or wrongdoing. Use only authorized images and consenting participants. Keep this unauthenticated dashboard on localhost.</p>
+</main><footer>The Gods Eye · Local development prototype</footer>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+const $=id=>document.getElementById(id);
+async function api(path,options){const r=await fetch(path,options);let data;try{data=await r.json()}catch{data={}}if(!r.ok)throw new Error(data.detail||('Request failed: '+r.status));return data}
+async function refresh(){try{const s=await api('/api/status');$('api-status').textContent='Local API connected';$('monitor-status').textContent='Reference image: '+(s.reference_uploaded?'saved locally':'not uploaded')+'. Location feed: '+(s.location_feed_present?'available':'not available')+'.'}catch(e){$('api-status').textContent='API unavailable';$('monitor-status').textContent=e.message}
+try{const events=await api('/api/events?limit=50');renderEvents(Array.isArray(events)?events:(events.events||[]))}catch(e){$('events').textContent=e.message}}
+function renderEvents(items){const root=$('events');root.replaceChildren();if(!items.length){root.innerHTML='<p class="muted">No events recorded yet.</p>';return}items.forEach(e=>{const card=document.createElement('div');card.className='event';const time=document.createElement('div');time.textContent=e.detected_at||e.created_at||'Time unavailable';const detail=document.createElement('small');detail.textContent='Potential match · similarity '+(e.similarity??'unknown')+' · '+(e.location_status||'location unavailable');card.append(time,detail);root.append(card)});if(window.eventMap){window.eventMap.remove();window.eventMap=null}if(window.L){window.eventMap=L.map('map').setView([20.5937,78.9629],4);L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'&copy; OpenStreetMap contributors'}).addTo(window.eventMap);const markers=[];items.forEach(e=>{const loc=e.location;if(loc&&Number.isFinite(Number(loc.latitude))&&Number.isFinite(Number(loc.longitude))){markers.push(L.marker([Number(loc.latitude),Number(loc.longitude)]).addTo(window.eventMap).bindPopup('Potential match<br>'+String(e.detected_at||'')))} });if(markers.length)window.eventMap.fitBounds(L.featureGroup(markers).getBounds().pad(.2))}}
+$('upload-form').addEventListener('submit',async ev=>{ev.preventDefault();const file=$('reference').files[0];if(!file)return;$('upload-status').textContent='Uploading…';const fd=new FormData();fd.append('file',file);try{const d=await api('/api/reference',{method:'POST',body:fd});$('upload-status').textContent=d.message||'Reference saved locally.';refresh()}catch(e){$('upload-status').textContent=e.message}});
+$('location-button').addEventListener('click',()=>{if(!navigator.geolocation){$('location-status').textContent='Geolocation is not supported by this browser.';return}$('location-status').textContent='Requesting permission…';navigator.geolocation.getCurrentPosition(async pos=>{try{const d=await api('/api/location',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({latitude:pos.coords.latitude,longitude:pos.coords.longitude,accuracy_m:pos.coords.accuracy,fix_timestamp:new Date(pos.timestamp).toISOString(),source:'browser_geolocation'})});$('location-status').textContent=d.message+' Accuracy: ±'+Math.round(pos.coords.accuracy)+' m.';refresh()}catch(e){$('location-status').textContent=e.message}},e=>{$('location-status').textContent='Location unavailable: '+e.message},{enableHighAccuracy:true,timeout:12000,maximumAge:0})});
+$('refresh').addEventListener('click',refresh);refresh();
+</script></body></html>
