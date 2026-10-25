@@ -1,0 +1,12 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.env
+reference_faces/*
+!reference_faces/README.md
+runtime/*
+!runtime/.gitkeep
+models/*.onnx
+*.log
+events.jsonl
